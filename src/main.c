@@ -3,17 +3,17 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pwm.h>
-#include <zephyr/random/random.h>
+#include <zephyr/drivers/entropy.h>
 #include <zephyr/sys/util.h>
 #include <stdbool.h>
 
 #define NUM_LEDS             4
 #define TICK_MS              20
 
-#define HOLD_ALL_MS          3000   /* how long to hold all 4 to trigger game */
-#define GET_READY_MS         1000   /* NEW: buffer time to let go of buttons */
-#define ROUND_COMPLETE_MS    1000   /* NEW: pause after finishing a round */
-#define LAST_LED_SHOW_MS     300    /* NEW: how long the last pressed LED stays lit */
+#define HOLD_ALL_MS          3000
+#define GET_READY_MS         1000
+#define ROUND_COMPLETE_MS    1000
+#define LAST_LED_SHOW_MS     300
 
 #define BREATH_HALF_STEPS    30
 #define PATTERN_FLASH_ON_MS  400
@@ -39,6 +39,16 @@ static const struct gpio_dt_spec buttons[NUM_LEDS] = {
 static struct gpio_callback button_cb_data[NUM_LEDS];
 static volatile bool button_pressed[NUM_LEDS];
 static volatile bool button_just_pressed[NUM_LEDS];
+
+/* NEW: talk directly to the board's real hardware random number chip */
+static const struct device *entropy_dev;
+
+static uint8_t random_led(void)
+{
+    uint8_t byte = 0;
+    entropy_get_entropy(entropy_dev, &byte, 1);
+    return byte % NUM_LEDS;
+}
 
 static void button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
@@ -82,10 +92,10 @@ static void all_leds_on(void)
 
 enum game_state {
     STATE_IDLE,
-    STATE_GET_READY,       /* NEW */
+    STATE_GET_READY,
     STATE_SHOW_PATTERN,
     STATE_WAIT_INPUT,
-    STATE_ROUND_COMPLETE,  /* NEW */
+    STATE_ROUND_COMPLETE,
     STATE_GAME_OVER,
 };
 
@@ -112,7 +122,7 @@ static bool gameover_led_on;
 static void start_new_game(void)
 {
     pattern_length = 1;
-    pattern[0] = sys_rand32_get() % NUM_LEDS;
+    pattern[0] = random_led();
     show_timer_ms = 0;
     all_leds_off();
     state = STATE_SHOW_PATTERN;
@@ -120,7 +130,7 @@ static void start_new_game(void)
 
 static void extend_pattern(void)
 {
-    pattern[pattern_length] = sys_rand32_get() % NUM_LEDS;
+    pattern[pattern_length] = random_led();
     pattern_length++;
     show_timer_ms = 0;
     all_leds_off();
@@ -129,6 +139,11 @@ static void extend_pattern(void)
 
 int main(void)
 {
+    entropy_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
+    if (!device_is_ready(entropy_dev)) {
+        return 0;
+    }
+
     for (int i = 0; i < NUM_LEDS; i++) {
         if (!pwm_is_ready_dt(&pwm_leds[i])) {
             return 0;
@@ -191,11 +206,9 @@ int main(void)
             break;
         }
 
-        /* NEW: signal that the game is about to start, so you can let go */
         case STATE_GET_READY: {
             get_ready_timer_ms += TICK_MS;
 
-            /* blink all 4 LEDs together fast, like a countdown flash */
             if ((get_ready_timer_ms / 150) % 2 == 0) {
                 if (!get_ready_led_on) {
                     all_leds_on();
@@ -254,8 +267,6 @@ int main(void)
                     input_index++;
 
                     if (input_index >= pattern_length) {
-                        /* NEW: don't jump straight to next round.
-                         * Show the last correct LED, then pause. */
                         last_correct_led = pressed_led;
                         round_complete_timer_ms = 0;
                         state = STATE_ROUND_COMPLETE;
@@ -284,7 +295,6 @@ int main(void)
             break;
         }
 
-        /* NEW: pause after a correct full round, shows last press, then waits */
         case STATE_ROUND_COMPLETE: {
             round_complete_timer_ms += TICK_MS;
 

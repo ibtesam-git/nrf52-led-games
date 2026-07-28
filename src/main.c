@@ -22,6 +22,8 @@
 #define INPUT_TIMEOUT_MS     4000
 #define GAMEOVER_FLASH_COUNT 6
 
+#define DEBOUNCE_MS           300   /* change to 500 if you want it stricter */
+
 static const struct pwm_dt_spec pwm_leds[NUM_LEDS] = {
     PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0)),
     PWM_DT_SPEC_GET(DT_ALIAS(pwm_led1)),
@@ -39,6 +41,7 @@ static const struct gpio_dt_spec buttons[NUM_LEDS] = {
 static struct gpio_callback button_cb_data[NUM_LEDS];
 static volatile bool button_pressed[NUM_LEDS];
 static volatile bool button_just_pressed[NUM_LEDS];
+static volatile int debounce_timer_ms[NUM_LEDS];
 
 /* NEW: talk directly to the board's real hardware random number chip */
 static const struct device *entropy_dev;
@@ -58,8 +61,9 @@ static void button_isr(const struct device *dev, struct gpio_callback *cb, uint3
         if (pins & BIT(buttons[i].pin)) {
             bool now_pressed = gpio_pin_get_dt(&buttons[i]);
             button_pressed[i] = now_pressed;
-            if (now_pressed) {
+            if (now_pressed && debounce_timer_ms[i] <= 0) {
                 button_just_pressed[i] = true;
+                debounce_timer_ms[i] = DEBOUNCE_MS;
             }
         }
     }
@@ -169,6 +173,12 @@ int main(void)
             pressed[i] = button_pressed[i];
             just_pressed[i] = button_just_pressed[i];
             button_just_pressed[i] = false;
+        }
+
+        for (int i = 0; i < NUM_LEDS; i++) {
+            if (debounce_timer_ms[i] > 0) {
+                debounce_timer_ms[i] -= TICK_MS;
+            }
         }
 
         switch (state) {

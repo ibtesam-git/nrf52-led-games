@@ -1,4 +1,4 @@
-# nRF52 LED Games
+# nRF52 LED Game
 
 Interactive LED and button games built for the Nordic nRF52 DK (`nrf52dk_nrf52832`), using the nRF Connect SDK (Zephyr RTOS). No external hardware required — everything runs on the board's built-in buttons and LEDs.
 
